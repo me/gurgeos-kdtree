@@ -56,6 +56,28 @@ class KdtreeTest < Minitest::Test
   end
 
   def test_persist
+  def test_add
+    added = []
+    1000.times do |i|
+      pt = [rand_coord, rand_coord, @points.size+i]
+      added << pt
+      @kdtree.add pt
+    end
+    100.times do
+      pt = [rand_coord, rand_coord]
+      # kdtree search
+      id = @kdtree.nearest(pt[0], pt[1])
+      kdpt = (@points + added)[id]
+
+      # slow search
+      sortpt = (@points + added).sort_by { |i| distance(i, pt) }.first
+
+      # assert
+      kdd = distance(kdpt, pt)
+      sortd = distance(sortpt, pt)
+      assert((kdd - sortd).abs < 0.0000001, "kdtree didn't return the closest result")
+    end
+  end
     # write
     File.open(TMP, "w") { |f| @kdtree.persist(f) }
     # read

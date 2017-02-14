@@ -9,6 +9,7 @@ typedef struct kdtree_data
 {
     int root;
     int len;
+    int size;
     struct kdtree_node *nodes;
 } kdtree_data;
 
@@ -40,6 +41,7 @@ static VALUE kdtree_nearest(VALUE kdtree, VALUE x, VALUE y);
 static VALUE kdtree_nearestk(VALUE kdtree, VALUE x, VALUE y, VALUE k);
 static VALUE kdtree_persist(VALUE kdtree, VALUE io);
 static VALUE kdtree_to_s(VALUE kdtree);
+static VALUE kdtree_add(VALUE kdtree, VALUE v);
 
 // kdtree helpers
 static int kdtree_build(struct kdtree_data *kdtreep, int min, int max, int depth);
@@ -104,6 +106,7 @@ static VALUE kdtree_initialize(VALUE kdtree, VALUE arg)
         VALUE points = arg;
         int i;
         kdtreep->len = RARRAY_LEN(points);
+        kdtreep->size = kdtreep->len;
         kdtreep->nodes = ALLOC_N(struct kdtree_node, kdtreep->len);
 
         for (i = 0; i < RARRAY_LEN(points); ++i) {
@@ -170,15 +173,46 @@ static int kdtree_build(struct kdtree_data *kdtreep, int min, int max, int depth
         return -1;
     }
 
+
     // sort nodes from min to max
     compar = (depth % 2) ? comparex : comparey;
     qsort(kdtreep->nodes + min, max - min, sizeof(struct kdtree_node), compar);
 
     median = (min + max) / 2;
+
     m = kdtreep->nodes + median;
     m->left = kdtree_build(kdtreep, min, median, depth + 1);
     m->right = kdtree_build(kdtreep, median + 1, max, depth + 1);
     return median;
+}
+
+static void kdtree_grow(struct kdtree_data *kdtreep) {
+    int size = kdtreep->size;
+    int newSize = size*2;
+    struct kdtree_node *nodes = ALLOC_N(struct kdtree_node, newSize);
+    memcpy(nodes, kdtreep->nodes, sizeof(kdtree_node)*size);
+    kdtreep->nodes = nodes;
+    kdtreep->size = newSize;
+}
+
+static int kdtree_insert(struct kdtree_data *kdtreep, int i_p, int i_n, int depth)
+{
+    int(*compar)(const void *, const void *);
+    compar = (depth % 2) ? comparex : comparey;
+    if (i_n == -1) {
+        i_n = i_p;
+    } else if (i_n == i_p) {
+        // nothing
+    } else {
+        struct kdtree_node *n = kdtreep->nodes + i_n;
+        struct kdtree_node *p = kdtreep->nodes + i_p;
+        if (compar(p, n) == -1) {
+            n->left = kdtree_insert(kdtreep, i_p, n->left, depth + 1);
+        } else {
+            n->right = kdtree_insert(kdtreep, i_p, n->right, depth + 1);
+        }
+    }
+    return i_n;
 }
 
 /*
@@ -422,6 +456,26 @@ static VALUE kdtree_persist(VALUE kdtree, VALUE io)
     return io;
 }
 
+static VALUE kdtree_add(VALUE kdtree, VALUE v) {
+    KDTREEP;
+    if (kdtreep->size < kdtreep->len + 1) {
+        kdtree_grow(kdtreep);
+    }
+    if (NIL_P(v) || RARRAY_LEN(v) != 3) {
+        rb_raise(rb_eTypeError, "array of size 3 required");
+    }
+    int i = kdtreep->len;
+    struct kdtree_node *n = kdtreep->nodes + i;
+    kdtreep->len += 1;
+    n->x = NUM2DBL(rb_ary_entry(v, 0));
+    n->y = NUM2DBL(rb_ary_entry(v, 1));
+    n->id = NUM2INT(rb_ary_entry(v, 2));
+    n->left = -1;
+    n->right = -1;
+    kdtreep->root = kdtree_insert(kdtreep, i, kdtreep->root, 0);
+    return kdtree;
+}
+
 /*
  * call-seq:
  *   kd.to_s     => string
@@ -499,6 +553,7 @@ void Init_kdtree()
     rb_define_method(clazz, "nearestk", kdtree_nearestk, 3);
     rb_define_method(clazz, "persist", kdtree_persist, 1);
     rb_define_method(clazz, "to_s", kdtree_to_s, 0);
+    rb_define_method(clazz, "add", kdtree_add, 1);
 
     // function ids
     id_binmode = rb_intern("binmode");
